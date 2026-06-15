@@ -1,0 +1,44 @@
+# .gitpilot.yml — per-repo configuration
+# Copy to .gitpilot.yml and edit. Created automatically by `gitpilot init`.
+#
+# NOTE: Safety rules in gitpilot/config/safety.py ALWAYS apply and cannot be
+# overridden here (protected branches, blocked labels, approval requirements,
+# the 95% confidence cap, etc.).
+
+repo: owner/repository
+
+merge:
+  enabled: true
+  min_reviews: 1
+  require_ci: true            # always enforced on protected branches regardless
+  ci_checks: []               # empty = all checks must pass
+  strategy: squash            # merge | squash | rebase
+  delete_branch_after: true
+
+branches:
+  enabled: true
+  stale_days: 30
+  warn_before_delete: true    # always enforced regardless
+  warning_days: 3
+  protected: []               # user additions; safety.py patterns always included
+
+conflicts:
+  enabled: true
+  max_file_size_kb: 100
+  post_suggestion_as_comment: true
+
+git_ops:
+  enabled: true
+  intercept_commands: true
+  educational_mode: false     # explain Git internals when true
+  approval_timeout_seconds: 30
+
+release:
+  enabled: true
+  changelog_format: conventional   # conventional | keepachangelog | simple
+  auto_suggest_version: true
+
+notifications:
+  slack_webhook: ""
+  github_comments: true
+  terminal: true

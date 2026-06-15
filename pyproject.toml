@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gitpilot"
+version = "0.1.0"
+description = "AI-powered Git Operations Engineer — explains, warns, assists, and executes only after your approval"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer[all]>=0.12",
+    "rich>=13.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "PyGitHub>=2.3",
+    "GitPython>=3.1",
+    "pydantic>=2.0",
+    "PyYAML>=6.0",
+    "keyring>=24.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+gitpilot = "gitpilot.cli.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gitpilot"]
