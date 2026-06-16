@@ -153,22 +153,41 @@ class ConflictAgent:
             )
 
     def _materialize_conflicts(self, pr_number: int, temp_dir: str) -> dict[str, str]:
-        """Clone into temp dir and surface conflict markers via a trial merge.
+        """Clone into a temp dir and surface real conflict markers via a trial merge.
 
-        TODO: full GitPython clone + ``git merge --no-commit`` to produce real
-        conflict markers. For now, fetch the conflicting file list from the API
-        and read their PR-side content so hunk parsing has data to work with.
-        Read-only intent throughout; nothing here ever leaves ``temp_dir``.
+        Clones the repo (read-only intent), checks out the PR base branch, and
+        attempts ``git merge --no-commit --no-ff`` of the head branch. Files left
+        unmerged then contain genuine ``<<<<<<<`` markers, which we read back for
+        hunk parsing. Nothing here is ever committed, pushed, or written outside
+        ``temp_dir`` (the caller removes it in a finally block).
         """
+        from git import GitCommandError, Repo
+
         results: dict[str, str] = {}
         try:
             pr = self.github.get_pr(pr_number)
-            for f in pr.get_files():
-                if f.patch and "<<<<<<<" in (f.patch or ""):
-                    results[f.filename] = f.patch
+            base, head = pr.base.ref, pr.head.ref
+            full = self.github.repo_full_name
+            token = getattr(self.github, "token", None)
+            # Token is embedded only in the ephemeral temp-dir remote; never logged.
+            url = (f"https://x-access-token:{token}@github.com/{full}.git"
+                   if token else f"https://github.com/{full}.git")
+
+            repo = Repo.clone_from(url, temp_dir)
+            repo.git.checkout(base)
+            try:
+                repo.git.merge(f"origin/{head}", "--no-commit", "--no-ff")
+            except GitCommandError:
+                pass  # expected: a conflicting merge exits non-zero
+
+            unmerged = repo.index.unmerged_blobs()
+            for path in unmerged:
+                fpath = os.path.join(temp_dir, path)
+                if os.path.exists(fpath):
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
+                        results[path] = fh.read()
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not materialize conflicts for #%s: %s", pr_number, exc)
-        _ = temp_dir  # reserved for the clone-based implementation
         return results
 
 

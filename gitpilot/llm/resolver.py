@@ -23,43 +23,46 @@ logger = logging.getLogger("gitpilot.llm")
 # Default confidence reported for a successful provider call. Never 100.
 DEFAULT_CONFIDENCE = 85
 
+# Model IDs verified available on the free tiers as of 2026-06. Free model
+# availability changes often; if every OpenRouter entry 404s, refresh these from
+# https://openrouter.ai/api/v1/models (filter for ids ending in ":free").
 PROVIDERS: list[dict] = [
     {
-        "name": "gemini-flash (openrouter)",
+        "name": "gemma-4-31b (openrouter)",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "google/gemini-flash-1.5",
+        "model": "google/gemma-4-31b-it:free",
         "key_env": "OPENROUTER_API_KEY",
         "format": "openai",
-        "daily_limit": 1500,
+        "daily_limit": 1000,
     },
     {
-        "name": "llama-3.1-70b (openrouter)",
+        "name": "llama-3.3-70b (openrouter)",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "meta-llama/llama-3.1-70b-instruct:free",
+        "model": "meta-llama/llama-3.3-70b-instruct:free",
         "key_env": "OPENROUTER_API_KEY",
         "format": "openai",
-        "daily_limit": 200,
+        "daily_limit": 1000,
     },
     {
-        "name": "mistral-7b (openrouter)",
+        "name": "qwen3-next-80b (openrouter)",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "mistralai/mistral-7b-instruct:free",
+        "model": "qwen/qwen3-next-80b-a3b-instruct:free",
         "key_env": "OPENROUTER_API_KEY",
         "format": "openai",
-        "daily_limit": 200,
+        "daily_limit": 1000,
     },
     {
-        "name": "gemini-flash (google direct)",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-        "model": "gemini-1.5-flash",
+        "name": "gemini-2.0-flash (google direct)",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "model": "gemini-2.0-flash",
         "key_env": "GOOGLE_AI_STUDIO_KEY",
         "format": "google",
         "daily_limit": 1500,
     },
     {
-        "name": "llama-3.1-70b (groq)",
+        "name": "llama-3.3-70b (groq)",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "model": "llama-3.1-70b-versatile",
+        "model": "llama-3.3-70b-versatile",
         "key_env": "GROQ_API_KEY",
         "format": "openai",
         "daily_limit": 14400,

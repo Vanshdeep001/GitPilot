@@ -193,7 +193,13 @@ class PRAgent:
 def _combined_ci_status(pr) -> str:
     try:
         commit = pr.get_commits().reversed[0]
-        state = commit.get_combined_status().state  # success | failure | pending | error
+        combined = commit.get_combined_status()  # success | failure | pending | error
+        check_runs = commit.get_check_runs().totalCount
+        # No commit statuses AND no check runs → CI simply isn't configured.
+        # Treat that as "unknown" so it doesn't block forever as fake "pending".
+        if combined.total_count == 0 and check_runs == 0:
+            return "unknown"
+        state = combined.state
         if state in ("success", "failure", "pending"):
             return state
         if state == "error":
