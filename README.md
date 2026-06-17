@@ -67,6 +67,8 @@ gitpilot stop                          # clean shutdown
 
 See [`gitpilot/config/safety.py`](gitpilot/config/safety.py) for the full, hardcoded ruleset.
 
-> **Status:** v0.1.0 scaffold. The core layers (safety, config, db, llm, github client, CLI,
-> display) are implemented. The five agent pillars are wired with real interfaces; their
-> deeper logic is marked with `TODO` for incremental build-out.
+> **Status:** v0.1.0 — all five pillars and the automatic webhook daemon have been
+> live-tested end-to-end against a real GitHub repo (PR evaluation, branch health,
+> conflict clone+merge analysis, release readiness, and the git-ops safety engine).
+> Remaining refinements: the 6-hour branch-scan scheduler is not yet wired into the
+> daemon loop.

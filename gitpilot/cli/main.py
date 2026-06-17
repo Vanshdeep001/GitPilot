@@ -19,9 +19,19 @@ from gitpilot.cli import display as d
 app = typer.Typer(
     name="gitpilot",
     help="AI-powered Git Operations Engineer — explains, warns, and acts only with your approval",
-    no_args_is_help=True,
+    no_args_is_help=False,
     add_completion=False,
 )
+
+
+@app.callback(invoke_without_command=True)
+def _root(ctx: typer.Context):
+    """Show the GitPilot banner when run with no command."""
+    if ctx.invoked_subcommand is None:
+        d.banner()
+        d.welcome_hint()
+        raise typer.Exit()
+
 
 PID_DIR = Path.home() / ".gitpilot"
 PID_FILE = PID_DIR / "gitpilot.pid"
@@ -52,11 +62,10 @@ def auth():
 
     try:
         login = GitHubClient(token=github_token).validate_token()
-        d.success(f"Authenticated as @{login}")
     except Exception as exc:  # noqa: BLE001
         d.error(f"GitHub token validation failed: {exc}")
         raise typer.Exit(code=1)
-    d.success("Keys stored securely in OS keychain")
+    d.banner(subtitle=f"✓ Authenticated as @{login} — keys stored securely in your OS keychain")
 
 
 @app.command()
@@ -101,7 +110,7 @@ def init():
         else:
             d.warning("Webhook registration failed — you can add it manually later")
 
-    d.agent("GitPilot will RECOMMEND actions. You approve before anything executes.")
+    d.banner(subtitle=f"✓ Configured for {repo_full} — GitPilot recommends; you approve before anything executes")
 
 
 # ---------------------------------------------------------------------------

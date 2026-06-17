@@ -263,8 +263,7 @@ class GitOpsAgent:
                 recent_commits="; ".join(state.recent_commits) or "none",
             )
             text, provider, conf = self.llm.call(prompt, system=SYSTEM_ADVISOR)
-            if not seed.prediction:
-                seed.prediction = text.strip()
+            self._merge_llm_fields(seed, text)
             seed.llm_provider = provider
             seed.confidence = cap_confidence(conf)
         except AllProvidersExhausted:
@@ -274,6 +273,28 @@ class GitOpsAgent:
             logger.warning("LLM enrichment failed: %s", exc)
             seed.confidence = cap_confidence(seed.confidence or 50)
         return seed
+
+    @staticmethod
+    def _merge_llm_fields(seed: GitOpAnalysis, text: str) -> None:
+        """Parse the labeled LLM response into the structured analysis fields.
+
+        Deterministic safety values from the interceptor (risk level, the core
+        warnings/steps) take precedence; the LLM only fills gaps and adds prose.
+        """
+        fields = _split_labeled(text)
+        seed.prediction = fields.get("PREDICTION", "").strip() or seed.prediction
+        will = fields.get("WILL_SUCCEED", "").strip().lower()
+        if will in ("yes", "no", "uncertain"):
+            seed.will_succeed = will
+        for w in _as_list(fields.get("WARNINGS", "")):
+            if w and w not in seed.warnings:
+                seed.warnings.append(w)
+        if not seed.recommended_steps:
+            seed.recommended_steps = _as_list(fields.get("RECOMMENDED_STEPS", ""))
+        if not seed.alternatives:
+            seed.alternatives = _as_list(fields.get("ALTERNATIVES", ""))
+        if not seed.educational_note:
+            seed.educational_note = fields.get("EDUCATIONAL_NOTE", "").strip()
 
     # ------------------------------------------------------------------
     # Approval (typed confirmations for high-risk ops)
@@ -344,3 +365,28 @@ class GitOpsAgent:
             target.chmod(target.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
             installed.append(str(target))
         return installed
+
+
+def _split_labeled(text: str) -> dict[str, str]:
+    labels = ["PREDICTION", "RISK_LEVEL", "WILL_SUCCEED", "WARNINGS",
+              "RECOMMENDED_STEPS", "ALTERNATIVES", "CONFIDENCE", "EDUCATIONAL_NOTE"]
+    out: dict[str, str] = {}
+    current = None
+    for line in (text or "").splitlines():
+        stripped = line.strip().lstrip("0123456789. ")
+        matched = next((lbl for lbl in labels if stripped.upper().startswith(lbl)), None)
+        if matched:
+            current = matched
+            out[current] = stripped[len(matched):].lstrip(": ").strip()
+        elif current:
+            out[current] += "\n" + line
+    return out
+
+
+def _as_list(text: str) -> list[str]:
+    items: list[str] = []
+    for line in (text or "").splitlines():
+        item = line.strip().strip("-•*").strip()
+        if item and item.lower() not in ("none", "[]", "n/a"):
+            items.append(item)
+    return items

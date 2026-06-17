@@ -156,7 +156,11 @@ class PRAgent:
                 conflict_status="conflicts" if rec.has_conflicts else "clean",
             )
             text, provider, conf = self.llm.call(prompt, system=SYSTEM_ADVISOR)
-            rec.summary = text.strip()
+            rec.summary = _clean_summary(text)
+            # Surface any extra LLM warnings the rules didn't already capture.
+            for w in _as_list(_split_labeled(text).get("WARNINGS", "")):
+                if w and w.lower() not in ("none", "[]") and w not in rec.warnings:
+                    rec.warnings.append(w)
             rec.llm_provider = provider
             rec.confidence = cap_confidence(min(rec.confidence or conf, conf))
         except AllProvidersExhausted:
@@ -209,13 +213,78 @@ def _combined_ci_status(pr) -> str:
         return "unknown"
 
 
+_REC_EMOJI = {
+    "ready-to-merge": "✅",
+    "needs-review": "👀",
+    "blocked": "🚫",
+    "needs-attention": "⚠️",
+}
+
+
 def _format_comment(rec: PRRecommendation) -> str:
-    lines = [f"### GitPilot — PR recommendation: `{rec.recommendation}`", ""]
+    emoji = _REC_EMOJI.get(rec.recommendation, "◆")
+    title = rec.recommendation.replace("-", " ").title()
+    lines = [
+        f"## {emoji} GitPilot — {title}",
+        "",
+    ]
     if rec.summary:
-        lines += [rec.summary, ""]
+        lines += [f"> {rec.summary}", ""]
     if rec.blocking_reasons:
-        lines += ["**Blocking:**"] + [f"- {r}" for r in rec.blocking_reasons] + [""]
+        lines += ["### 🚧 Blocking"] + [f"- {r}" for r in rec.blocking_reasons] + [""]
     if rec.warnings:
-        lines += ["**Warnings:**"] + [f"- {w}" for w in rec.warnings] + [""]
-    lines.append(f"_Confidence: {rec.confidence}% — GitPilot recommends; a human decides._")
+        lines += ["### ⚠️ Warnings"] + [f"- {w}" for w in rec.warnings] + [""]
+    bar = _confidence_bar_md(rec.confidence)
+    lines += [
+        "---",
+        f"**Confidence** {bar} `{rec.confidence}%`",
+        "",
+        "<sub>🤖 GitPilot recommends; a human always makes the final call. "
+        "Run `gitpilot approve <id>` to act on this.</sub>",
+    ]
     return "\n".join(lines)
+
+
+def _confidence_bar_md(score: int) -> str:
+    score = max(0, min(score, 95))
+    filled = round(score / 10)
+    return "█" * filled + "░" * (10 - filled)
+
+
+def _split_labeled(text: str) -> dict[str, str]:
+    labels = ["RECOMMENDATION", "BLOCKING_REASONS", "WARNINGS", "CONFIDENCE", "SUMMARY"]
+    out: dict[str, str] = {}
+    current = None
+    for line in (text or "").splitlines():
+        stripped = line.strip().lstrip("0123456789. ")
+        matched = next((lbl for lbl in labels if stripped.upper().startswith(lbl)), None)
+        if matched:
+            current = matched
+            out[current] = stripped[len(matched):].lstrip(": ").strip()
+        elif current:
+            out[current] += "\n" + line
+    return out
+
+
+def _as_list(text: str) -> list[str]:
+    cleaned = (text or "").strip().strip("[]")
+    parts = []
+    for chunk in cleaned.replace('", "', "\n").splitlines():
+        item = chunk.strip().strip('-•"\' ').strip()
+        if item:
+            parts.append(item)
+    return parts
+
+
+def _clean_summary(text: str) -> str:
+    """Prefer the model's SUMMARY field; fall back to the first real sentence."""
+    fields = _split_labeled(text)
+    summary = fields.get("SUMMARY", "").strip().strip('"')
+    if summary:
+        return summary
+    for line in (text or "").splitlines():
+        s = line.strip().lstrip("0123456789. ")
+        if s and not any(s.upper().startswith(l) for l in
+                         ("RECOMMENDATION", "BLOCKING", "WARNING", "CONFIDENCE")):
+            return s
+    return (text or "").strip().splitlines()[0] if text.strip() else ""

@@ -97,17 +97,39 @@ class ReleaseAgent:
 
     # ------------------------------------------------------------------
     def _merged_prs_since(self, tag: str) -> list[dict]:
-        # TODO: compare commits since the tag's date for precise filtering.
+        """Collect PRs merged strictly after the given tag's commit date.
+
+        Falls back to "all merged PRs" only when the tag has no resolvable date
+        (e.g. a brand-new repo with no real releases yet).
+        """
+        cutoff = self._tag_date(tag)
         prs: list[dict] = []
         try:
-            for pr in self.github.repo.get_pulls(state="closed", sort="updated", direction="desc"):
-                if pr.merged:
-                    prs.append({"title": pr.title or "", "labels": [l.name for l in pr.get_labels()]})
+            for pr in self.github.repo.get_pulls(
+                state="closed", sort="updated", direction="desc"
+            ):
+                if not pr.merged or not pr.merged_at:
+                    continue
+                if cutoff is not None and pr.merged_at <= cutoff:
+                    # Sorted by updated desc, so older merges only continue from here,
+                    # but updated != merged time; keep scanning a bounded window.
+                    continue
+                prs.append({"title": pr.title or "", "labels": [l.name for l in pr.get_labels()]})
                 if len(prs) >= 100:
                     break
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to collect merged PRs: %s", exc)
         return prs
+
+    def _tag_date(self, tag: str):
+        """Return the commit datetime for a tag, or None if it can't be resolved."""
+        if not tag or tag == "0.0.0":
+            return None
+        try:
+            return self.github.repo.get_commit(tag).commit.author.date
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not resolve date for tag %s: %s", tag, exc)
+            return None
 
     def _changelog_from_prs(self, prs: list[dict]) -> str:
         groups = {"Breaking Changes": [], "Features": [], "Bug Fixes": [], "Other": []}

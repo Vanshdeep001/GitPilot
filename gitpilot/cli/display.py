@@ -5,9 +5,11 @@ from __future__ import annotations
 import sys
 
 from rich import box
-from rich.console import Console
+from rich.align import Align
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 # Windows consoles default to cp1252, which cannot encode the box-drawing,
 # block, emoji, and em-dash characters used below. Force UTF-8 so output never
@@ -20,20 +22,98 @@ for _stream in (sys.stdout, sys.stderr):
 
 console = Console()
 
+FOOTER = "[dim italic]◆ GitPilot recommends — you make the final call[/]"
 
+
+# ---------------------------------------------------------------------------
+# Status line helpers
+# ---------------------------------------------------------------------------
 def success(msg: str) -> None: console.print(f"[bold green]✓[/] {msg}")
 def error(msg: str) -> None:   console.print(f"[bold red]✗[/] {msg}")
 def warning(msg: str) -> None: console.print(f"[bold yellow]⚠[/] {msg}")
 def info(msg: str) -> None:    console.print(f"[bold blue]ℹ[/] {msg}")
-def agent(msg: str) -> None:   console.print(f"[bold purple]◆[/] {msg}")
+def agent(msg: str) -> None:   console.print(f"[bold magenta]◆[/] {msg}")
 def blocked(msg: str) -> None: console.print(f"[bold red]\U0001f6ab[/] {msg}")
 def pending(msg: str) -> None: console.print(f"[bold cyan]⏳[/] {msg}")
 
 
+# ---------------------------------------------------------------------------
+# Banner — shown on bare `gitpilot`, and after auth/init/start
+# ---------------------------------------------------------------------------
+_BANNER_ART = r"""
+   ____ _ _   ____  _ _       _
+  / ___(_) |_|  _ \(_) | ___ | |_
+ | |  _| | __| |_) | | |/ _ \| __|
+ | |_| | | |_|  __/| | | (_) | |_
+  \____|_|\__|_|   |_|_|\___/ \__|
+"""
+
+_BANNER_GRADIENT = ["bright_cyan", "cyan", "blue", "blue", "bright_blue"]
+
+
+def banner(subtitle: str | None = None) -> None:
+    """Print the GitPilot splash — a creative welcome, Claude-Code style."""
+    from gitpilot import __version__
+
+    art_lines = _BANNER_ART.strip("\n").splitlines()
+    rendered = Text()
+    for i, line in enumerate(art_lines):
+        color = _BANNER_GRADIENT[min(i, len(_BANNER_GRADIENT) - 1)]
+        rendered.append(line + "\n", style=f"bold {color}")
+    rendered.append("\n  ✈  ", style="bold bright_cyan")
+    rendered.append("Your AI co-pilot for Git operations", style="bold white")
+    rendered.append(f"   v{__version__}\n", style="dim")
+    rendered.append(
+        "  Analyze → Explain → Recommend → Approve → Execute → Report\n",
+        style="dim cyan",
+    )
+    if subtitle:
+        rendered.append(f"\n  {subtitle}\n", style="bold green")
+    rendered.append(
+        "\n  GitPilot recommends — you always make the final call.",
+        style="dim italic",
+    )
+    console.print(
+        Panel(rendered, box=box.HEAVY, border_style="bright_cyan", padding=(0, 2))
+    )
+
+
+def welcome_hint() -> None:
+    """A short 'what next' shown under the banner for new users."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(style="white")
+    table.add_row("gitpilot auth", "Store your GitHub + LLM keys (once, in the OS keychain)")
+    table.add_row("gitpilot init", "Configure GitPilot for the current repo")
+    table.add_row("gitpilot explain \"<cmd>\"", "Analyze a risky git command before running it")
+    table.add_row("gitpilot --help", "See every command")
+    console.print(Panel(table, title="[bold]Get started[/]", border_style="dim",
+                        box=box.ROUNDED, padding=(1, 1)))
+
+
+# ---------------------------------------------------------------------------
+# Badges & bars
+# ---------------------------------------------------------------------------
 RISK_COLORS = {
     "very-low": "bright_green", "low": "green",
     "moderate": "yellow", "medium": "yellow", "high": "red",
-    "very-high": "bold red", "critical": "bold red on dark_red",
+    "very-high": "bold red", "critical": "bold white on red",
+}
+
+REC_STYLE = {
+    "ready-to-merge": ("✅", "bold green"),
+    "needs-review": ("👀", "bold yellow"),
+    "blocked": ("🚫", "bold red"),
+    "needs-attention": ("⚠️", "yellow"),
+}
+
+CLASS_STYLE = {
+    "active": "green", "stale": "bold red",
+    "release": "magenta", "uncertain": "yellow",
+}
+
+READINESS_STYLE = {
+    "ready": "bold green", "needs-attention": "yellow", "not-ready": "bold red",
 }
 
 
@@ -42,90 +122,139 @@ def risk_badge(level: str) -> str:
     return f"[{color}] {level.upper()} [/]"
 
 
+def rec_badge(recommendation: str) -> str:
+    emoji, color = REC_STYLE.get(recommendation, ("◆", "white"))
+    return f"[{color}]{emoji} {recommendation}[/]"
+
+
 def confidence_bar(score: int) -> str:
     """Visual confidence bar — always caps at 95%."""
     score = min(score, 95)
     filled = score // 10
     bar = "█" * filled + "░" * (10 - filled)
     color = "green" if score > 80 else "yellow" if score > 60 else "red"
-    return f"[{color}]{bar}[/] {score}%"
+    return f"[{color}]{bar}[/] [bold]{score}%[/]"
 
 
+# ---------------------------------------------------------------------------
+# Panels & tables
+# ---------------------------------------------------------------------------
 def operation_panel(analysis) -> Panel:
     """Main display for Git Operations Intelligence — a rich bordered panel."""
-    lines = [
-        f"[bold]Command:[/]    {analysis.command}",
-        f"[bold]Risk:[/]       {risk_badge(analysis.risk_level)}",
-        f"[bold]Will work:[/]  {analysis.will_succeed}",
-        f"[bold]Confidence:[/] {confidence_bar(analysis.confidence)}",
-    ]
+    head = Table.grid(padding=(0, 2))
+    head.add_column(style="bold", justify="right")
+    head.add_column()
+    head.add_row("Command", f"[bright_white]{analysis.command}[/]")
+    head.add_row("Risk", risk_badge(analysis.risk_level))
+    head.add_row("Will work", _will_work(analysis.will_succeed))
+    head.add_row("Confidence", confidence_bar(analysis.confidence))
+
+    parts = [head]
     if analysis.prediction:
-        lines += ["", "[bold]What will happen:[/]", analysis.prediction]
+        parts += [Text("\nWhat will happen", style="bold"), Text(analysis.prediction)]
     if analysis.warnings:
-        lines += ["", "[bold yellow]⚠ Warnings:[/]"] + [f"  • {w}" for w in analysis.warnings]
+        parts.append(_bullets("⚠️  Warnings", analysis.warnings, "yellow"))
     if analysis.recommended_steps:
-        lines += ["", "[bold]Recommended steps:[/]"] + \
-                 [f"  {i}. {s}" for i, s in enumerate(analysis.recommended_steps, 1)]
+        parts.append(_numbered("🛟  Recommended steps", analysis.recommended_steps))
     if analysis.alternatives:
-        lines += ["", "[bold]Alternatives:[/]"] + [f"  • {a}" for a in analysis.alternatives]
+        parts.append(_bullets("🔀  Safer alternatives", analysis.alternatives, "cyan"))
     if analysis.educational_note:
-        lines += ["", f"[dim]ℹ {analysis.educational_note}[/]"]
-    return Panel("\n".join(lines), title="GitPilot — Operation Analysis",
-                 border_style=RISK_COLORS.get(analysis.risk_level, "white"), box=box.ROUNDED)
+        parts.append(Text(f"\nℹ  {analysis.educational_note}", style="dim"))
+
+    return Panel(
+        Group(*parts),
+        title="[bold]✈ GitPilot — Operation Analysis[/]",
+        subtitle=FOOTER,
+        border_style=RISK_COLORS.get(analysis.risk_level, "white"),
+        box=box.ROUNDED, padding=(1, 2),
+    )
 
 
 def pr_table(prs: list) -> Table:
-    table = Table(title="Open PRs", box=box.SIMPLE_HEAVY)
-    table.add_column("PR", style="cyan")
-    table.add_column("Recommendation")
-    table.add_column("Blocking / Warnings")
-    table.add_column("Confidence")
+    table = Table(title="[bold]✈ Pull Request Readiness[/]", box=box.ROUNDED,
+                  header_style="bold cyan", title_justify="left", expand=True)
+    table.add_column("PR", style="bold cyan", no_wrap=True)
+    table.add_column("Recommendation", no_wrap=True)
+    table.add_column("Blocking / Warnings", ratio=2)
+    table.add_column("Confidence", no_wrap=True)
     for rec in prs:
-        notes = "; ".join(rec.blocking_reasons + rec.warnings) or "-"
-        table.add_row(f"#{rec.pr_number}", rec.recommendation, notes, confidence_bar(rec.confidence))
+        notes = _join_notes(rec.blocking_reasons, rec.warnings)
+        table.add_row(f"#{rec.pr_number}", rec_badge(rec.recommendation),
+                      notes, confidence_bar(rec.confidence))
+    table.caption = FOOTER
     return table
 
 
 def branch_table(branches: list) -> Table:
-    table = Table(title="Branch Health", box=box.SIMPLE_HEAVY)
-    table.add_column("Branch", style="cyan")
-    table.add_column("Age (days)")
-    table.add_column("Classification")
-    table.add_column("Risk")
-    table.add_column("Recommendation")
+    table = Table(title="[bold]✈ Branch Health[/]", box=box.ROUNDED,
+                  header_style="bold cyan", title_justify="left", expand=True)
+    table.add_column("Branch", style="bold cyan")
+    table.add_column("Age", justify="right", no_wrap=True)
+    table.add_column("Classification", no_wrap=True)
+    table.add_column("Risk", no_wrap=True)
+    table.add_column("Recommendation", ratio=2)
     for b in branches:
-        table.add_row(b.name, str(b.age_days), b.classification,
+        cls_color = CLASS_STYLE.get(b.classification, "white")
+        lock = "🔒 " if b.protected else ""
+        table.add_row(f"{lock}{b.name}", f"{b.age_days}d",
+                      f"[{cls_color}]{b.classification}[/]",
                       risk_badge(b.risk_level), b.recommendation)
+    table.caption = FOOTER
     return table
 
 
 def conflict_panel(analysis) -> Panel:
     """Conflict analysis — always includes the 'SUGGESTION ONLY' label."""
-    lines = ["[bold red]SUGGESTION ONLY — Human review and implementation required[/]", "",
-             f"Overall risk: {risk_badge(analysis.overall_risk)}",
-             f"Confidence: {confidence_bar(analysis.overall_confidence)}",
-             f"Estimated human time: {analysis.estimated_human_time}", ""]
+    parts: list = [
+        Panel(
+            "[bold]SUGGESTION ONLY[/] — human review and implementation required",
+            border_style="red", box=box.HEAVY, padding=(0, 1),
+        ),
+        _kv_grid([
+            ("Overall risk", risk_badge(analysis.overall_risk)),
+            ("Confidence", confidence_bar(analysis.overall_confidence)),
+            ("Est. human time", analysis.estimated_human_time),
+            ("Files", str(len(analysis.per_file_analysis))),
+        ]),
+    ]
+    if not analysis.per_file_analysis:
+        parts.append(Text("\nNo analyzable conflict hunks were found.", style="dim"))
     for f in analysis.per_file_analysis:
-        lines += [f"[bold cyan]{f.file_path}[/] ({f.language}) — {f.classification}, "
-                  f"risk {f.risk}", f"  {f.explanation}"]
+        cls_color = CLASS_STYLE.get(f.classification, "white")
+        block = Text()
+        block.append(f"\n{f.file_path}", style="bold cyan")
+        block.append(f"  ({f.language})  ", style="dim")
+        block.append(f"{f.classification}", style=cls_color)
+        block.append(f" · risk {f.risk}\n", style=RISK_COLORS.get(f.risk, "white"))
+        block.append(f.explanation + "\n")
         if f.human_review_notes:
-            lines.append(f"  [yellow]Verify:[/] {f.human_review_notes}")
-    return Panel("\n".join(lines), title=f"Conflict Analysis — PR #{analysis.pr_number}",
-                 border_style="yellow", box=box.ROUNDED)
+            block.append("Verify: ", style="bold yellow")
+            block.append(f.human_review_notes + "\n")
+        parts.append(block)
+
+    return Panel(
+        Group(*parts),
+        title=f"[bold]✈ Conflict Analysis — PR #{analysis.pr_number}[/]",
+        subtitle=FOOTER, border_style="yellow", box=box.ROUNDED, padding=(1, 2),
+    )
 
 
 def release_panel(readiness) -> Panel:
-    lines = [f"[bold]Readiness:[/] {readiness.readiness}",
-             f"[bold]Current version:[/] {readiness.current_version}",
-             f"[bold]Suggested version:[/] {readiness.suggested_version or 'n/a'}",
-             f"[bold]Confidence:[/] {confidence_bar(readiness.confidence)}"]
+    r_color = READINESS_STYLE.get(readiness.readiness, "white")
+    parts = [_kv_grid([
+        ("Readiness", f"[{r_color}]{readiness.readiness.upper()}[/]"),
+        ("Current version", readiness.current_version or "—"),
+        ("Suggested version", f"[bold green]{readiness.suggested_version or '—'}[/]"),
+        ("Confidence", confidence_bar(readiness.confidence)),
+    ])]
     if readiness.blocking_issues:
-        lines += ["", "[bold red]Blocking issues:[/]"] + [f"  • {i}" for i in readiness.blocking_issues]
+        parts.append(_bullets("🚧 Blocking issues", readiness.blocking_issues, "red"))
     if readiness.warnings:
-        lines += ["", "[bold yellow]Warnings:[/]"] + [f"  • {w}" for w in readiness.warnings]
+        parts.append(_bullets("⚠️  Warnings", readiness.warnings, "yellow"))
     if readiness.changelog_draft:
-        lines += ["", "[bold]Changelog draft:[/]", readiness.changelog_draft]
-    return Panel("\n".join(lines), title="Release Readiness", border_style="blue", box=box.ROUNDED)
+        parts += [Text("\nChangelog draft", style="bold"), Text(readiness.changelog_draft)]
+    return Panel(Group(*parts), title="[bold]✈ Release Readiness[/]", subtitle=FOOTER,
+                 border_style="blue", box=box.ROUNDED, padding=(1, 2))
 
 
 def approval_prompt(action_type: str, risk: str) -> bool:
@@ -140,3 +269,43 @@ def approval_prompt(action_type: str, risk: str) -> bool:
         answer = typer.prompt(f'[{action_type}] Type "yes" to approve', default="")
         return answer.strip().lower() == "yes"
     return typer.confirm(f"[{action_type}] Approve?", default=False)
+
+
+# ---------------------------------------------------------------------------
+# Internal layout helpers
+# ---------------------------------------------------------------------------
+def _kv_grid(rows: list[tuple[str, str]]):
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="bold", justify="right")
+    grid.add_column()
+    for k, v in rows:
+        grid.add_row(k, v)
+    return grid
+
+
+def _bullets(title: str, items: list[str], color: str):
+    t = Text()
+    t.append(f"\n{title}\n", style=f"bold {color}")
+    for item in items:
+        t.append("  • ", style=color)
+        t.append(item + "\n")
+    return t
+
+
+def _numbered(title: str, items: list[str]):
+    t = Text()
+    t.append(f"\n{title}\n", style="bold")
+    for i, item in enumerate(items, 1):
+        t.append(f"  {i}. ", style="bold cyan")
+        t.append(item + "\n")
+    return t
+
+
+def _will_work(value: str) -> str:
+    colors = {"yes": "green", "no": "red", "uncertain": "yellow"}
+    return f"[{colors.get(value, 'white')}]{value}[/]"
+
+
+def _join_notes(blocking: list[str], warnings: list[str]) -> str:
+    parts = [f"[red]• {b}[/]" for b in blocking] + [f"[yellow]• {w}[/]" for w in warnings]
+    return "\n".join(parts) if parts else "[dim]—[/]"
